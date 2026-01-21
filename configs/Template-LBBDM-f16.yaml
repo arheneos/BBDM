@@ -55,7 +55,7 @@ model:
     params:
       ckpt_path:
       embed_dim: 8
-      n_embed: 16384
+      n_embed: 512
       ddconfig:
         double_z: false
         z_channels: 8
@@ -64,7 +64,6 @@ model:
         out_ch: 1
         ch: 128
         ch_mult: !!python/tuple
-          - 1
           - 1
           - 2
           - 2
