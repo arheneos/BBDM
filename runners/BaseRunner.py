@@ -71,7 +71,7 @@ class SimRealDatasetFromFiles(Dataset):
         real = self.random_crop(real, size=64)
         real_tensor = torch.from_numpy(real).float().unsqueeze(0)
         sim_tensor = torch.from_numpy(sim).float().unsqueeze(0)
-        return sim_tensor, real_tensor
+        return (sim_tensor, 'sim'), (real_tensor, 'real')
 
 
 class BaseRunner(ABC):
