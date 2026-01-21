@@ -18,7 +18,7 @@ data:
   dataset_config:
     dataset_path: 'dataset_path'
     image_size: 256
-    channels: 3
+    channels: 1
     to_normal: True
     flip: True
   train:
@@ -53,15 +53,15 @@ model:
 
   VQGAN:
     params:
-      ckpt_path: 'results/VQGAN/CelebAMaskHQ-f16.ckpt'
+      ckpt_path:
       embed_dim: 8
       n_embed: 16384
       ddconfig:
         double_z: false
         z_channels: 8
         resolution: 256
-        in_channels: 3
-        out_ch: 3
+        in_channels: 1
+        out_ch: 1
         ch: 128
         ch_mult: !!python/tuple
           - 1

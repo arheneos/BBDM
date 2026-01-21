@@ -2,14 +2,16 @@ import argparse
 import datetime
 import pdb
 import time
-
+import numpy as np
+import cv2
+import random
 import yaml
 import os
 import traceback
 
 import torch
 import torch.distributed as dist
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn.parallel import DistributedDataParallel as DDP
 
@@ -20,6 +22,56 @@ from tqdm.autonotebook import tqdm
 # from evaluation.LPIPS import calc_LPIPS
 from runners.base.EMA import EMA
 from runners.utils import make_save_dirs, make_dir, get_dataset, remove_file
+
+
+class SimRealDatasetFromFiles(Dataset):
+    def __init__(self, files, real_files):
+        """
+        sim_images: [N, H, W] float32, simulation data (input)
+        real_images: [N, H, W] float32, real or target data (GT)
+        """
+        self.sim: [str] = files
+        self.real: [np.ndarray] = real_files
+
+    def __len__(self):
+        return max(len(self.sim), len(self.real))
+
+    def random_crop(self, img, size=100):
+        h, w = img.shape
+        top = random.randint(0, h - size)
+        left = random.randint(0, w - size)
+        return img[top:top + size, left:left + size]
+
+    def get_real(self):
+        real = random.choice(self.real)
+        return real
+
+    def get_sim(self):
+        idx = random.randrange(0, len(self.sim) - 1)
+        single = self.sim[idx]
+        try:
+            with open(single, 'rb') as f:
+                data = np.frombuffer(f.read(), dtype=np.float32)
+            if np.isnan(data).any():
+                return self.get_sim()
+            image = np.reshape(data[:120 * 120], (120, 120)).copy()
+            if max(data) > 100 or np.mean(data) > 10:
+                return self.get_sim()
+            if min(data) < -100 or np.mean(data) < -10:
+                return self.get_sim()
+        except:
+            return self.get_sim()
+        return image
+
+    def __getitem__(self, idx):
+        sim = self.get_sim()
+        real = self.get_real()
+        sim = sim - np.mean(sim)
+        sim = self.random_crop(sim, size=64)
+        real = self.random_crop(real, size=64)
+        real_tensor = torch.from_numpy(real).float().unsqueeze(0)
+        sim_tensor = torch.from_numpy(sim).float().unsqueeze(0)
+        return sim_tensor, real_tensor
 
 
 class BaseRunner(ABC):
@@ -336,16 +388,27 @@ class BaseRunner(ABC):
         pass
 
     def train(self):
+        import glob
         self.logger(self.__class__.__name__)
+        reals = []
+        for single in tqdm.tqdm(glob.glob('/home/psdl/Workspace/SUNDAE_GAN/Real/*.npy')[:-1]):
+            data = np.load(single).copy()
+            h, w = data.shape
+            if h < 80 and w < 80:
+                continue
+            data = -data
+            data = data - np.mean(data)
+            reals.append(data)
 
-        train_dataset, val_dataset, test_dataset = get_dataset(self.config.data)
+        d0 = list(glob.glob('/home/psdl/Workspace/SUNDAE_GAN/train/*.bin'))
+        d1 = reals
+        train_dataset = SimRealDatasetFromFiles(d0[:-10000], d1[:-10000])
+        val_dataset = SimRealDatasetFromFiles(d0[-10000:], d1[-10000:])
         train_sampler = None
         val_sampler = None
-        test_sampler = None
         if self.config.training.use_DDP:
             train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
             val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset)
-            test_sampler = torch.utils.data.distributed.DistributedSampler(test_dataset)
             train_loader = DataLoader(train_dataset,
                                       batch_size=self.config.data.train.batch_size,
                                       num_workers=8,
@@ -356,11 +419,6 @@ class BaseRunner(ABC):
                                     num_workers=8,
                                     drop_last=True,
                                     sampler=val_sampler)
-            test_loader = DataLoader(test_dataset,
-                                     batch_size=self.config.data.test.batch_size,
-                                     num_workers=8,
-                                     drop_last=True,
-                                     sampler=test_sampler)
         else:
             train_loader = DataLoader(train_dataset,
                                       batch_size=self.config.data.train.batch_size,
@@ -372,12 +430,6 @@ class BaseRunner(ABC):
                                     shuffle=self.config.data.val.shuffle,
                                     num_workers=8,
                                     drop_last=True)
-            test_loader = DataLoader(test_dataset,
-                                     batch_size=self.config.data.test.batch_size,
-                                     shuffle=False,
-                                     num_workers=8,
-                                     drop_last=True)
-
         epoch_length = len(train_loader)
         start_epoch = self.global_epoch
         self.logger(f"start training {self.config.model.model_name} on {self.config.data.dataset_name}, {len(train_loader)} iters per epoch")
