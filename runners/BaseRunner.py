@@ -391,7 +391,7 @@ class BaseRunner(ABC):
         import glob
         self.logger(self.__class__.__name__)
         reals = []
-        for single in tqdm.tqdm(glob.glob('/home/psdl/Workspace/SUNDAE_GAN/Real/*.npy')[:-1]):
+        for single in tqdm(glob.glob('/home/psdl/Workspace/SUNDAE_GAN/Real/*.npy')[:-1]):
             data = np.load(single).copy()
             h, w = data.shape
             if h < 80 and w < 80:
